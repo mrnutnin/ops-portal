@@ -273,11 +273,24 @@ final class InstanceEntitlementDelivery
                     && in_array($parts['host'] ?? '', ['127.0.0.1', 'localhost'], true)
                     && isset($parts['port']) && $parts['port'] >= 1 && $parts['port'] <= 65535)
                 || (($parts['scheme'] ?? '') === 'https'
-                    && in_array($parts['host'] ?? '', config('ops.entitlement_allowed_hosts', []), true)
+                    && $this->allowedTargetHost($parts['host'] ?? '')
                     && ! filter_var($parts['host'] ?? '', FILTER_VALIDATE_IP)
                     && (! isset($parts['port']) || $parts['port'] === 443)
                     && preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}\z/', $parts['host'] ?? '') === 1)
             );
+    }
+
+    private function allowedTargetHost(string $host): bool
+    {
+        foreach (config('ops.entitlement_allowed_hosts', []) as $allowedHost) {
+            $host = strtolower($host);
+            $allowedHost = strtolower($allowedHost);
+            if ($host === $allowedHost || str_ends_with($host, '.'.$allowedHost)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function assertAdmin(User $actor): void

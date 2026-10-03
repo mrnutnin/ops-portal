@@ -12,6 +12,10 @@ use App\Models\Product;
 use App\Models\ProductPlan;
 use App\Models\User;
 use App\Services\TrialIssuanceService;
+use App\Services\InstanceRenewalService;
+use App\Models\InstanceRenewal;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 use Database\Seeders\ProductPlanSeeder;
 use Database\Seeders\ProductSeeder;
@@ -164,7 +168,9 @@ class OpsTrialIssuanceContractTest extends TestCase
             } catch (ValidationException $exception) {
                 $this->assertArrayHasKey('paid_expires_at', $exception->errors());
             }
+            $payment = $this->payment($instance, $admin, Carbon::parse('2027-10-01', 'UTC'));
             $request = Request::create('/admin/instances/'.$instance->id.'/trial/convert', 'POST', [
+                'renewal_id' => $payment->id,
                 'product_plan_id' => $core->id, 'paid_expires_at' => '2027-10-01T07:00',
                 'reason' => 'Contract and period approved',
             ]);
@@ -172,6 +178,10 @@ class OpsTrialIssuanceContractTest extends TestCase
             app(AdminTrialController::class)->convertToPaid($request, $instance, $service);
             $paid = $trial->fresh();
             $this->assertSame('ACTIVE', $paid->status);
+            $this->assertSame(0, $paid->grace_days);
+            $this->assertSame($paid->expires_at->timestamp, $paid->paid_period_end->timestamp);
+            $this->assertSame('APPLIED', $payment->fresh()->status);
+            $this->assertSame(3, $payment->fresh()->applied_revision);
             $this->assertSame('2027-10-01 00:00:00', $paid->expires_at->utc()->format('Y-m-d H:i:s'));
             $this->assertSame(3, $paid->source_revision);
             $this->assertSame('CORE', $paid->productPlan->code);
@@ -215,13 +225,30 @@ class OpsTrialIssuanceContractTest extends TestCase
                 $this->assertArrayHasKey('production_addon', $exception->errors());
             }
             $this->assertSame(1, $instance->entitlement->source_revision);
-            $service->convertToPaid($instance, $plan->id, Carbon::parse('2027-11-01', 'UTC'), $admin, 'New paid period approved');
+            $payment = $this->payment($instance, $admin, Carbon::parse('2027-11-01', 'UTC'));
+            $service->convertToPaid($instance, $plan->id, Carbon::parse('2027-11-01', 'UTC'), $admin, 'New paid period approved', null, null, $payment->id);
             $this->assertSame('ACTIVE', $instance->entitlement->fresh()->status);
             $this->assertSame(2, $instance->entitlement->fresh()->source_revision);
             $this->assertSame(1, DB::table('trial_issuances')->count());
         } finally {
             Date::setTestNow();
         }
+    }
+
+    private function payment(Instance $instance, User $admin, Carbon $end): InstanceRenewal
+    {
+        Storage::fake('local');
+        $service = app(InstanceRenewalService::class);
+        $payment = $service->save($instance, [
+            'kind' => 'TRIAL', 'period_start' => now('Asia/Bangkok')->format('Y-m-d\\TH:i'),
+            'period_end' => $end->copy()->timezone('Asia/Bangkok')->format('Y-m-d\\TH:i'),
+            'payment_due_at' => now('Asia/Bangkok')->format('Y-m-d\\TH:i'), 'agreed_amount' => '1000.00',
+            'reason' => 'First payment verified', 'expected_revision' => $instance->entitlement()->sole()->source_revision,
+        ], $admin);
+        $file = UploadedFile::fake()->createWithContent('receipt.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='));
+        $service->confirm($payment, ['expected_version' => $payment->fresh()->version, 'received_amount' => '1000.00', 'received_at' => now('Asia/Bangkok')->format('Y-m-d\\TH:i'),
+            'external_reference' => 'Receipt-001', 'reason' => 'External accounts settled', 'settled' => '1'], $file, $admin);
+        return $payment->fresh();
     }
 
     public function test_trial_requires_active_minterp_business_plan_and_admin_reason(): void

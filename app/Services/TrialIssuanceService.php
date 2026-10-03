@@ -113,10 +113,10 @@ class TrialIssuanceService
         });
     }
 
-    public function convertToPaid(Instance $instance, int $planId, Carbon $expiresAt, User $actor, string $reason, ?string $ip = null, ?string $userAgent = null): void
+    public function convertToPaid(Instance $instance, int $planId, Carbon $expiresAt, User $actor, string $reason, ?string $ip = null, ?string $userAgent = null, ?int $renewalId = null): void
     {
         $reason = $this->validateApproval($actor, $reason);
-        DB::transaction(function () use ($instance, $planId, $expiresAt, $actor, $reason, $ip, $userAgent): void {
+        DB::transaction(function () use ($instance, $planId, $expiresAt, $actor, $reason, $ip, $userAgent, $renewalId): void {
             $target = Instance::query()->with(['customer', 'product'])->whereKey($instance->id)->lockForUpdate()->firstOrFail();
             $entitlement = InstanceEntitlement::query()->where('instance_id', $target->id)->lockForUpdate()->first();
             $this->requireCurrentTrial($target, $entitlement);
@@ -129,17 +129,23 @@ class TrialIssuanceService
             if ($expiresAt->lte($startsAt)) {
                 throw ValidationException::withMessages(['paid_expires_at' => 'วันหมดอายุของแพ็กเกจชำระเงินต้องอยู่หลังเวลาปัจจุบัน (เวลาไทย)']);
             }
+            $renewals = app(InstanceRenewalService::class);
+            $payment = $renewals->trialPayment($target, $entitlement, $renewalId, $expiresAt);
+            $renewalBefore = $entitlement->renewalSnapshot();
             $before = $this->snapshot($entitlement);
             $entitlement->update([
                 'product_plan_id' => $plan->id,
                 'status' => 'ACTIVE',
                 'starts_at' => $startsAt,
                 'expires_at' => $expiresAt,
+                'paid_period_end' => $expiresAt,
+                'grace_days' => 0,
                 'overrides' => [],
                 'cancel_at_period_end' => false,
                 'source_revision' => $entitlement->source_revision + 1,
                 'change_reason' => $reason,
             ]);
+            $renewals->markApplied($payment, $entitlement, $actor, $renewalBefore, $reason);
             $this->recordChange($entitlement, $actor, 'trial.converted_to_paid', $reason, $before, $this->snapshot($entitlement), $ip, $userAgent);
         });
     }
@@ -172,6 +178,8 @@ class TrialIssuanceService
             'status' => $entitlement->status,
             'starts_at' => $entitlement->starts_at?->copy()->utc()->toIso8601String(),
             'expires_at' => $entitlement->expires_at?->copy()->utc()->toIso8601String(),
+            'paid_period_end' => $entitlement->paid_period_end?->copy()->utc()->toIso8601String(),
+            'grace_days' => $entitlement->grace_days,
             'production_addon' => $entitlement->production_addon,
             'effective_values' => $entitlement->effectiveValues(),
             'source_revision' => $entitlement->source_revision,

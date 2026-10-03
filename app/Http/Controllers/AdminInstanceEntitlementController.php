@@ -39,6 +39,8 @@ class AdminInstanceEntitlementController extends Controller
             'trialIssued' => DB::table('trial_issuances')->where('instance_id', $instance->id)->exists(),
             'businessPlans' => $plans->where('code', 'BUSINESS')->where('is_active', true),
             'paidPlans' => $plans->whereIn('code', ['CORE', 'BUSINESS'])->where('is_active', true),
+            'renewalHistory' => $instance->renewals()->latest('id')->paginate(10, ['*'], 'renewals_page'),
+            'trialPayment' => $instance->renewals()->where('kind', 'TRIAL')->where('status', 'CONFIRMED')->first(),
             'trialHistory' => DB::table('trial_issuances')->join('instances', 'instances.id', '=', 'trial_issuances.instance_id')
                 ->join('users', 'users.id', '=', 'trial_issuances.actor_id')
                 ->where('trial_issuances.customer_id', $instance->customer_id)
@@ -139,6 +141,7 @@ class AdminInstanceEntitlementController extends Controller
             'expires_at' => ['nullable', 'date_format:Y-m-d\TH:i', 'after:starts_at'],
             'cancel_at_period_end' => ['boolean'],
             'change_reason' => ['required', 'string', 'min:10', 'max:500'],
+            'reset_billing' => ['nullable', 'boolean'],
         ];
 
         if ($request->input('commercial_mode') === 'SUBSCRIPTION') {
@@ -181,6 +184,23 @@ class AdminInstanceEntitlementController extends Controller
             if (DB::table('trial_issuances')->where('instance_id', $lockedInstance->id)->exists()
                 && (! $current || $current->status === 'TRIAL')) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['commercial_mode' => 'Instance นี้มีประวัติ Trial; ห้ามเปลี่ยนสิทธิ์ผ่านฟอร์มทั่วไปจนกว่าจะมีขั้นตอนแปลง Trial ที่ตรวจสอบและบันทึก Audit']);
+            }
+            $state['paid_period_end'] = $current?->paid_period_end;
+            $state['grace_days'] = $current?->grace_days ?? 0;
+            if ($state['commercial_mode'] !== 'SUBSCRIPTION') {
+                $state['paid_period_end'] = null;
+                $state['grace_days'] = 0;
+            } elseif ($current?->paid_period_end) {
+                if (! $this->sameDate($current->starts_at, $state['starts_at']) || ! $this->sameDate($current->expires_at, $state['expires_at'])) {
+                    if (! $request->boolean('reset_billing')) {
+                        throw \Illuminate\Validation\ValidationException::withMessages(['expires_at' => 'มีรอบที่ยืนยันชำระแล้ว ให้ใช้รายการต่ออายุ; การแก้วันแบบข้อยกเว้นต้องยืนยันล้างข้อมูลรอบที่ชำระ']);
+                    }
+                    $state['paid_period_end'] = null;
+                    $state['grace_days'] = 0;
+                } elseif ($state['cancel_at_period_end']) {
+                    $state['expires_at'] = $current->paid_period_end;
+                    $state['grace_days'] = 0;
+                }
             }
             if ($current && $this->sameState($current, $state)) {
                 return false;
@@ -257,7 +277,9 @@ class AdminInstanceEntitlementController extends Controller
             && $this->sameDate($current->expires_at, $state['expires_at'])
             && ($current->overrides ?? []) === ($state['overrides'] ?? [])
             && $current->production_addon === $state['production_addon']
-            && $current->cancel_at_period_end === $state['cancel_at_period_end'];
+            && $current->cancel_at_period_end === $state['cancel_at_period_end']
+            && $this->sameDate($current->paid_period_end, $state['paid_period_end'])
+            && $current->grace_days === $state['grace_days'];
     }
 
     private function sameDate(?Carbon $current, ?Carbon $next): bool
@@ -282,6 +304,8 @@ class AdminInstanceEntitlementController extends Controller
             'starts_at' => $entitlement->starts_at?->toIso8601String(),
             'expires_at' => $entitlement->expires_at?->toIso8601String(),
             'cancel_at_period_end' => $entitlement->cancel_at_period_end,
+            'paid_period_end' => $entitlement->paid_period_end?->toIso8601String(),
+            'grace_days' => $entitlement->grace_days,
             'entitlement' => $values,
             'source_revision' => $entitlement->source_revision,
             'change_reason' => $entitlement->change_reason,

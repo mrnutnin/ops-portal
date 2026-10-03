@@ -49,6 +49,11 @@ class OpsAuditLog extends Model
         'trial.exception_issued' => 'อนุมัติ Trial ข้อยกเว้น',
         'trial.production_enabled' => 'เปิด Production Trial',
         'trial.converted_to_paid' => 'แปลง Trial เป็นแพ็กเกจชำระเงิน',
+        'renewal.created' => 'เปิดรายการต่ออายุ/รับชำระ',
+        'renewal.updated' => 'แก้รายการรอยืนยัน',
+        'renewal.confirmed' => 'ยืนยันรับชำระภายนอก',
+        'renewal.applied' => 'นำรอบที่ชำระไปใช้ใน Ops',
+        'renewal.voided' => 'ยกเลิกรายการรับชำระ',
     ];
 
     protected $fillable = [

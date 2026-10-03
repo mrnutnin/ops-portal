@@ -41,11 +41,12 @@ class AdminTrialController extends Controller
         $data = $request->validate([
             'product_plan_id' => ['required', 'integer', 'exists:product_plans,id'],
             'paid_expires_at' => ['required', 'date_format:Y-m-d\\TH:i'],
+            'renewal_id' => ['required', 'integer', 'exists:instance_renewals,id'],
             'reason' => ['required', 'string', 'min:10', 'max:500'],
         ]);
         $trials->convertToPaid(
             $instance, (int) $data['product_plan_id'], Carbon::createFromFormat('!Y-m-d\\TH:i', $data['paid_expires_at'], 'Asia/Bangkok')->utc(),
-            $request->user(), $data['reason'], $request->ip(), $request->userAgent(),
+            $request->user(), $data['reason'], $request->ip(), $request->userAgent(), (int) $data['renewal_id'],
         );
 
         return back()->with('status', 'แปลง Trial เป็นแพ็กเกจชำระเงินแล้ว; ยังไม่ส่งสิทธิ์ไปยัง ERP');

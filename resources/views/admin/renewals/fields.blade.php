@@ -1,0 +1,13 @@
+@php($entitlement = $instance->entitlement)
+<input type="hidden" name="expected_revision" value="{{ $entitlement?->source_revision }}">
+@if($renewal)<input type="hidden" name="expected_version" value="{{ $renewal->version }}">@endif
+<div class="form-row"><label for="kind">ประเภท</label><select id="kind" name="kind" required>@foreach(\App\Models\InstanceRenewal::KIND_LABELS as $value => $label)<option value="{{ $value }}" @selected(old('kind', $renewal?->kind ?? ($entitlement?->status === 'TRIAL' ? 'TRIAL' : 'RENEWAL')) === $value)>{{ $label }}</option>@endforeach</select>@error('kind')<p class="error">{{ $message }}</p>@enderror</div>
+<p class="muted">ต่ออายุ: เริ่มตรงสิ้นสุดรอบเดิม ไม่ใช่วันสิ้นสุดสิทธิ์รวมผ่อนผัน · เปิดผ่อนผันรอบเดิม: ใช้วันเริ่ม/สิ้นสุดสิทธิ์เดิมและหลักฐานที่ชำระแล้ว · Trial: ยืนยันเงินก่อนแปลงผ่านหน้า Instance (ไม่มีผ่อนผันรอบแรก)</p>
+@foreach(['period_start' => 'เริ่มรอบบริการ', 'period_end' => 'สิ้นสุดรอบบริการ (exclusive ไม่รวมเวลานี้)', 'payment_due_at' => 'วันครบกำหนดชำระตามบัญชี'] as $field => $label)
+    @php($defaultDate = $renewal?->{$field} ?? ($field === 'period_end' ? null : ($entitlement?->status === 'TRIAL' ? now() : $entitlement?->billingBoundary())))
+    <div class="form-row"><label for="{{ $field }}">{{ $label }} · เวลาไทย</label><input id="{{ $field }}" type="datetime-local" name="{{ $field }}" value="{{ old($field, $defaultDate?->copy()->timezone('Asia/Bangkok')->format('Y-m-d\TH:i')) }}" required>@error($field)<p class="error">{{ $message }}</p>@enderror</div>
+@endforeach
+<div class="form-row"><label for="agreed_amount">ยอดตามข้อตกลงที่จัดสรรให้ Instance นี้ (THB)</label><input id="agreed_amount" name="agreed_amount" type="number" min="0.01" max="999999999999.99" step="0.01" value="{{ old('agreed_amount', $renewal?->agreed_amount) }}" required>@error('agreed_amount')<p class="error">{{ $message }}</p>@enderror</div>
+<div class="form-row"><label for="external_reference">เลขอ้างอิงเอกสารบัญชีภายนอก</label><input id="external_reference" name="external_reference" value="{{ old('external_reference', $renewal?->external_reference) }}" maxlength="255">@error('external_reference')<p class="error">{{ $message }}</p>@enderror</div>
+<div class="form-row"><label for="note">หมายเหตุ</label><textarea id="note" name="note" maxlength="500">{{ old('note', $renewal?->note) }}</textarea>@error('note')<p class="error">{{ $message }}</p>@enderror</div>
+<div class="form-row"><label for="reason">เหตุผล (10–500 ตัวอักษร)</label><textarea id="reason" name="reason" minlength="10" maxlength="500" required>{{ old('reason', $renewal?->reason) }}</textarea>@error('reason')<p class="error">{{ $message }}</p>@enderror</div>

@@ -33,6 +33,17 @@
         <p class="notice">ยังไม่ได้กำหนดสิทธิ์ให้ Instance นี้ ขั้นถัดไปคือออก Trial หรือกำหนด Subscription/License</p>
     @endif
 
+    <h2>รอบบริการ / รับชำระภายนอก</h2>
+    @if($entitlement?->commercial_mode === 'SUBSCRIPTION')
+        <p><a href="{{ route('admin.renewals.create', $instance) }}">เปิดหรือดูรายการรับชำระ / ต่ออายุ / เปิดผ่อนผันรอบเดิม</a></p>
+        <p>{{ $entitlement->renewalStage() }} · รอบที่ชำระถึง {{ $entitlement->paid_period_end?->copy()->timezone('Asia/Bangkok')->format('d/m/Y H:i') ?? 'ยังไม่แยกรอบบริการ' }} · ผ่อนผัน {{ $entitlement->grace_days }} วัน (เวลาไทย)</p>
+        <p class="muted">วันสิ้นสุดสิทธิ์ด้านบนรวมผ่อนผันแล้ว ไม่ใช่วันสิ้นสุดรอบที่ชำระ; ต้องส่งสิทธิ์ให้ ERP ตอบรับก่อนหมดอายุเดิม</p>
+    @endif
+    <div class="table-wrap"><table><thead><tr><th>รายการ</th><th>รอบบริการ (เวลาไทย)</th><th>ยอดรับ / สถานะ</th></tr></thead><tbody>
+        @forelse($renewalHistory as $record)<tr><td><a href="{{ route('admin.renewals.show', $record) }}">#{{ $record->id }} · {{ \App\Models\InstanceRenewal::KIND_LABELS[$record->kind] }}</a></td><td>{{ $record->period_start->copy()->timezone('Asia/Bangkok')->format('d/m/Y H:i') }} – {{ $record->period_end->copy()->timezone('Asia/Bangkok')->format('d/m/Y H:i') }}</td><td>{{ $record->received_amount ?? '–' }} THB · {{ \App\Models\InstanceRenewal::STATUS_LABELS[$record->status] }}</td></tr>@empty<tr><td colspan="3">ยังไม่มีรายการรับชำระ</td></tr>@endforelse
+    </tbody></table></div>
+    {{ $renewalHistory->links() }}
+
     @if ($isMintErp)
         <h2 id="delivery">สถานะการส่งสิทธิ์ไป ERP</h2>
         @if ($syncCredential)
@@ -122,6 +133,8 @@
             <form method="POST" action="{{ route('admin.instances.trial.convert', $instance) }}" onsubmit="return confirm('แปลง Trial เป็นแพ็กเกจชำระเงินตาม Plan และวันหมดอายุที่ระบุหรือไม่?')">
                 @csrf
                 <div class="form-row"><label for="paid_plan">Plan ชำระเงิน</label><select id="paid_plan" name="product_plan_id" required><option value="">เลือก Plan</option>@foreach ($paidPlans as $plan)<option value="{{ $plan->id }}" @selected(old('product_plan_id') == $plan->id)>{{ $plan->code }} v{{ $plan->version }} · ผู้ใช้ {{ $plan->entitlement_defaults['quota_users'] }} สาขา {{ $plan->entitlement_defaults['quota_branches'] }} คลัง {{ $plan->entitlement_defaults['quota_warehouses'] }}</option>@endforeach</select>@error('product_plan_id')<p class="error">{{ $message }}</p>@enderror</div>
+                <p class="muted">ต้องยืนยันเงินและหลักฐานผ่านรายการรับชำระรอบแรกก่อนแปลง Trial; รอบแรกไม่มีผ่อนผัน</p>
+                <div class="form-row"><label for="renewal_id">รายการรับชำระรอบแรกที่ยืนยันแล้ว</label><select id="renewal_id" name="renewal_id" required><option value="">เลือกหลักฐาน</option>@if($trialPayment)<option value="{{ $trialPayment->id }}">#{{ $trialPayment->id }} · {{ $trialPayment->external_reference }} · {{ $trialPayment->received_amount }} THB</option>@endif</select>@error('renewal_id')<p class="error">{{ $message }}</p>@enderror</div>
                 <div class="form-row"><label for="paid_expires_at">วันหมดอายุรอบชำระเงิน (เวลาไทย)</label><input id="paid_expires_at" type="datetime-local" name="paid_expires_at" value="{{ old('paid_expires_at') }}" required>@error('paid_expires_at')<p class="error">{{ $message }}</p>@enderror</div>
                 <div class="form-row"><label for="paid_reason">เหตุผลการแปลง Trial</label><textarea id="paid_reason" name="reason" rows="3" required minlength="10" maxlength="500">{{ old('reason') }}</textarea>@error('reason')<p class="error">{{ $message }}</p>@enderror</div>
                 <button type="submit">แปลง Trial เป็นแพ็กเกจชำระเงิน</button>
@@ -167,6 +180,10 @@
         @endif
 
         <label><input class="checkbox" type="checkbox" name="cancel_at_period_end" value="1" @checked((bool) old('cancel_at_period_end', $entitlement?->cancel_at_period_end ?? false))> ยกเลิก Subscription เมื่อสิ้นสุดรอบที่ชำระ</label>
+        @if($entitlement?->paid_period_end)
+            <p class="muted">กำหนดยกเลิกจะตัดผ่อนผันและตั้งวันสิ้นสุดสิทธิ์ตรงรอบที่ชำระ {{ $entitlement->paid_period_end->copy()->timezone('Asia/Bangkok')->format('d/m/Y H:i') }} เวลาไทย; ต้องส่งสิทธิ์แยก การแก้วันแบบข้อยกเว้นจะล้างข้อมูลรอบที่ชำระและคงประวัติเดิม</p>
+            <label><input class="checkbox" type="checkbox" name="reset_billing" value="1" @checked(old('reset_billing'))> ยืนยันล้างข้อมูลรอบที่ชำระ หากแก้วันเริ่ม/หมดอายุแบบข้อยกเว้น (ไม่ใช่การต่ออายุจากการรับเงิน)</label>
+        @endif
         <div class="form-row"><label for="change_reason">เหตุผลการเปลี่ยนแปลง</label><textarea id="change_reason" name="change_reason" rows="3" required>{{ old('change_reason') }}</textarea>@error('change_reason')<p class="error">{{ $message }}</p>@enderror</div>
         <p class="muted">การบันทึกนี้เก็บสถานะใน Ops และเพิ่ม Revision; ต้องส่งไป ERP ด้วยคำสั่งของผู้ดูแลระบบแยกต่างหาก</p>
         <button type="submit">บันทึกสิทธิ์ Instance</button>
